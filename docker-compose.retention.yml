@@ -19,7 +19,7 @@
 
 services:
   langfuse-retention:
-    image: ${RETENTION_IMAGE:-ghcr.io/systemgroupnet/langfuse-open-retention:0.0.2}
+    image: ${RETENTION_IMAGE:-ghcr.io/systemgroupnet/langfuse-open-retention:0.0.3}
     build:
       # Compose resolves this against the FIRST -f file's directory (your Langfuse
       # folder), not against this file. The default assumes this repo was cloned
