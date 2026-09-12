@@ -9,6 +9,7 @@ const state = {
   expiredRows: {},
   storage: null,
   status: null,
+  orgsWithoutKeys: [],
   runs: [],
   pollTimer: null,
 };
@@ -462,7 +463,7 @@ const KEY_CELLS = {
 function renderProjects() {
   const tbody = $("#projects-table tbody");
   if (state.projects.length === 0) {
-    tbody.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "empty" }, "No projects found.")));
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: "7", class: "empty" }, "No projects found.")));
     return;
   }
 
@@ -476,6 +477,7 @@ function renderProjects() {
       return el(
         "tr",
         {},
+        el("td", {}, project.orgName || el("span", { class: "cell-mono" }, "—")),
         el("td", {}, el("div", {}, project.name), el("div", { class: "cell-mono" }, project.id)),
         el("td", {}, project.retentionDays === null ? "keep forever" : `${project.retentionDays} days`),
         el("td", { class: "cell-mono" }, project.cutoff ? project.cutoff.slice(0, 10) : "—"),
@@ -505,6 +507,22 @@ function renderProjects() {
   $("#expired-summary").textContent = parts.length
     ? `Currently expired across all projects: ${parts.join(", ")}.`
     : "Nothing is currently past its retention window.";
+
+  // An organization with no usable key is skipped entirely in API mode. That is
+  // invisible in the numbers above, so it gets stated outright.
+  const warning = $("#org-coverage-warning");
+  const uncovered = state.orgsWithoutKeys || [];
+  if (uncovered.length > 0) {
+    const names = uncovered.map((o) => o.name || o.id || "unknown").join(", ");
+    warning.hidden = false;
+    warning.textContent =
+      `No usable API key for ${uncovered.length} organization(s): ${names}. ` +
+      `Their projects are listed above but will be SKIPPED — their data will not be deleted. ` +
+      `An organization key only ever sees its own organization, so add one per org via ` +
+      `LANGFUSE_ORG_KEYS, or switch the traces module to direct ClickHouse mode, which needs no keys.`;
+  } else {
+    warning.hidden = true;
+  }
 }
 
 function renderPolicy() {
@@ -676,9 +694,10 @@ $("#refresh-runs").addEventListener("click", () => refreshRuns());
 /* ── orchestration ──────────────────────────────────── */
 
 async function refreshProjects() {
-  const { projects, expiredRows } = await api("/api/projects");
+  const { projects, expiredRows, orgsWithoutKeys } = await api("/api/projects");
   state.projects = projects;
   state.expiredRows = expiredRows || {};
+  state.orgsWithoutKeys = orgsWithoutKeys || [];
   if (state.policy) renderProjects();
 }
 

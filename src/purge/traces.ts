@@ -72,10 +72,12 @@ async function purgeViaApi(ctx: RunContext, result: ModuleResult, footprints: Ta
       break;
     }
 
-    const keys = await keysForProject(project.id);
+    const keys = await keysForProject(project.id, project.orgId, ctx.singleOrg);
     if (!keys) {
       result.details.push(
-        `${project.name}: no API key available. Set LANGFUSE_PROJECT_KEYS or an org-scoped key. Skipped.`,
+        `${project.name}${project.orgName ? ` (org: ${project.orgName})` : ""}: no API key available. ` +
+          `Add an organization key for this org via LANGFUSE_ORG_KEYS, or a project key ` +
+          `via LANGFUSE_PROJECT_KEYS. Skipped — its data was NOT deleted.`,
       );
       if (result.status === "ok") result.status = "partial";
       continue;

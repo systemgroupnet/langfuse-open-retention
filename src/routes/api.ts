@@ -11,12 +11,12 @@ import {
 } from "../auth.js";
 import { pingClickhouse } from "../clients/clickhouse.js";
 import { pingDocker } from "../clients/docker.js";
-import { hasOrgKeys, health as langfuseHealth, projectKeyStatus } from "../clients/langfuse.js";
+import { configuredOrgIds, hasOrgKeys, health as langfuseHealth, projectKeyStatus } from "../clients/langfuse.js";
 import { pingPostgres } from "../clients/postgres.js";
 import { pingS3 } from "../clients/s3.js";
 import { config } from "../config.js";
 import { errorMessage } from "../logger.js";
-import { buildContext, discoverProjects } from "../purge/context.js";
+import { buildContext } from "../purge/context.js";
 import { expiredTraceCounts } from "../purge/traces.js";
 import { currentRun, isRunning, runRetention } from "../purge/runner.js";
 import { applySchedule, schedulerStatus } from "../scheduler.js";
@@ -68,7 +68,12 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     ]);
 
     return {
-      langfuse: { ...langfuse, baseUrl: config.langfuse.baseUrl, orgKeysConfigured: hasOrgKeys() },
+      langfuse: {
+        ...langfuse,
+        baseUrl: config.langfuse.baseUrl,
+        orgKeysConfigured: hasOrgKeys(),
+        configuredOrgIds: configuredOrgIds(),
+      },
       clickhouse,
       postgres,
       docker,
@@ -104,8 +109,6 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     const withCounts = (request.query as { counts?: string }).counts !== "false";
     const policy = getPolicy();
     const ctx = await buildContext(policy);
-    const discovered = await discoverProjects();
-    const eeRetention = new Map(discovered.map((p) => [p.id, p.retentionDays ?? null]));
 
     let perTable: Record<string, number> = {};
     let perProject: Record<string, number> = {};
@@ -119,20 +122,35 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const projects = ctx.projects.map((p) => ({
+    const projects = await Promise.all(
+      ctx.projects.map(async (p) => ({
       id: p.id,
       name: p.name,
+      orgId: p.orgId,
+      orgName: p.orgName,
       retentionDays: p.retentionDays,
       cutoff: p.cutoff?.toISOString() ?? null,
       excluded: p.excluded,
       hasOverride: Object.prototype.hasOwnProperty.call(policy.projectOverrides, p.id),
       /** Langfuse's own EE retention setting, shown read-only for comparison. */
-      langfuseRetentionDays: eeRetention.get(p.id) ?? null,
+      langfuseRetentionDays: p.langfuseRetentionDays,
       expiredTraces: perProject[p.id] ?? null,
-      keyStatus: policy.modules.traces.mode === "api" ? projectKeyStatus(p.id) : null,
-    }));
+      keyStatus:
+        policy.modules.traces.mode === "api" ? await projectKeyStatus(p.id, p.orgId, ctx.singleOrg) : null,
+      })),
+    );
 
-    return { projects, expiredRows: perTable };
+    // Organizations whose projects cannot be purged in API mode, so the UI can
+    // say so plainly instead of leaving them quietly untouched.
+    const orgsWithoutKeys = [
+      ...new Map(
+        projects
+          .filter((p) => p.keyStatus === "missing")
+          .map((p) => [p.orgId ?? "unknown", { id: p.orgId, name: p.orgName }]),
+      ).values(),
+    ];
+
+    return { projects, expiredRows: perTable, singleOrg: ctx.singleOrg, orgsWithoutKeys };
   });
 
   app.get("/api/storage", async (request) => {

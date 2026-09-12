@@ -7,7 +7,7 @@ process.env.RETENTION_ADMIN_PASSWORD ??= "test";
 process.env.RETENTION_DATA_DIR ??= "./.testdata";
 
 const { projectIdFromEventKey, blobCutoffFor } = await import("./purge/eventBlobs.js");
-const { daysAgo, formatBytes, globalSafeCutoff } = await import("./purge/context.js");
+const { daysAgo, formatBytes, globalSafeCutoff, isSingleOrg } = await import("./purge/context.js");
 const { estimateBytes } = await import("./purge/estimate.js");
 const { validatePolicy, ValidationError } = await import("./routes/policy-validation.js");
 const { parseDiskPaths } = await import("./storage/disk.js");
@@ -45,6 +45,21 @@ test("returns undefined rather than guessing on unrecognised keys", () => {
 
 const now = new Date("2026-09-12T12:00:00.000Z");
 
+/** A ProjectPlan fixture; org defaults to a single shared organization. */
+function plan(over: Partial<{ id: string; name: string; orgId: string | null; orgName: string | null; retentionDays: number | null; cutoff: Date | null; excluded: boolean }> = {}) {
+  return {
+    id: "p",
+    name: "p",
+    orgId: "org1",
+    orgName: "Org One",
+    retentionDays: 15,
+    langfuseRetentionDays: null,
+    cutoff: daysAgo(15, now),
+    excluded: false,
+    ...over,
+  };
+}
+
 function ctxWith(overrides: Partial<Parameters<typeof blobCutoffFor>[0]>) {
   return {
     policy: structuredClone(DEFAULT_POLICY),
@@ -58,7 +73,7 @@ function ctxWith(overrides: Partial<Parameters<typeof blobCutoffFor>[0]>) {
 test("blob retention follows the trace window when it has none of its own", () => {
   const ctx = ctxWith({});
   ctx.policy.modules.eventBlobs.retentionDays = null;
-  const cutoff = blobCutoffFor(ctx, { id: "p", name: "p", retentionDays: 30, cutoff: daysAgo(30, now), excluded: false });
+  const cutoff = blobCutoffFor(ctx, plan({ retentionDays: 30, cutoff: daysAgo(30, now) }));
   assert.equal(cutoff?.toISOString(), daysAgo(30, now).toISOString());
 });
 
@@ -66,7 +81,7 @@ test("the grace period is a hard floor, however aggressive the window", () => {
   const ctx = ctxWith({});
   ctx.policy.modules.eventBlobs.retentionDays = 1;
   ctx.policy.modules.eventBlobs.minGraceDays = 5;
-  const cutoff = blobCutoffFor(ctx, { id: "p", name: "p", retentionDays: 1, cutoff: daysAgo(1, now), excluded: false });
+  const cutoff = blobCutoffFor(ctx, plan({ retentionDays: 1, cutoff: daysAgo(1, now) }));
   assert.equal(
     cutoff?.toISOString(),
     daysAgo(5, now).toISOString(),
@@ -77,13 +92,13 @@ test("the grace period is a hard floor, however aggressive the window", () => {
 test("a project that keeps data forever yields no blob cutoff", () => {
   const ctx = ctxWith({});
   ctx.policy.modules.eventBlobs.retentionDays = null;
-  const cutoff = blobCutoffFor(ctx, { id: "p", name: "p", retentionDays: null, cutoff: null, excluded: true });
+  const cutoff = blobCutoffFor(ctx, plan({ retentionDays: null, cutoff: null, excluded: true }));
   assert.equal(cutoff, null);
 });
 
 test("instance-wide operations are disabled when any project keeps data forever", () => {
-  const keepForever = { id: "b", name: "b", retentionDays: null, cutoff: null, excluded: true };
-  const expiring = { id: "a", name: "a", retentionDays: 15, cutoff: daysAgo(15, now), excluded: false };
+  const keepForever = plan({ id: "b", name: "b", retentionDays: null, cutoff: null, excluded: true });
+  const expiring = plan({ id: "a", name: "a" });
 
   assert.equal(
     globalSafeCutoff(ctxWith({ projects: [expiring, keepForever], active: [expiring] })),
@@ -91,7 +106,7 @@ test("instance-wide operations are disabled when any project keeps data forever"
     "dropping a whole partition would destroy the retained project's rows too",
   );
 
-  const longer = { id: "c", name: "c", retentionDays: 90, cutoff: daysAgo(90, now), excluded: false };
+  const longer = plan({ id: "c", name: "c", retentionDays: 90, cutoff: daysAgo(90, now) });
   assert.equal(
     globalSafeCutoff(ctxWith({ projects: [expiring, longer], active: [expiring, longer] }))?.toISOString(),
     daysAgo(90, now).toISOString(),
@@ -191,4 +206,18 @@ test("an unset or empty disk-path setting disables the feature rather than error
   assert.deepEqual(parseDiskPaths(undefined), []);
   assert.deepEqual(parseDiskPaths(""), []);
   assert.deepEqual(parseDiskPaths("  ,  ,"), []);
+});
+
+/* ── multi-organization coverage ────────────────────────────────────────── */
+
+test("detects whether the instance has one organization or several", () => {
+  assert.equal(isSingleOrg([{ orgId: "org1" }, { orgId: "org1" }]), true);
+  assert.equal(isSingleOrg([{ orgId: "org1" }, { orgId: "org2" }]), false);
+  assert.equal(isSingleOrg([]), true, "an empty instance needs no disambiguation");
+  assert.equal(
+    isSingleOrg([{ orgId: null }, { orgId: "org1" }]),
+    true,
+    "projects with unknown org (API-only discovery) must not force multi-org handling",
+  );
+  assert.equal(isSingleOrg([{ orgId: null }, { orgId: null }]), true);
 });

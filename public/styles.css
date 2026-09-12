@@ -365,6 +365,12 @@ select:focus-visible {
   background: var(--warn-soft);
   color: var(--warn);
 }
+.banner.warn {
+  margin: 14px 0 0;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 500;
+}
 
 .breakdowns {
   display: grid;

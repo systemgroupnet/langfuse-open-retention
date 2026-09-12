@@ -120,6 +120,33 @@ There is no `depends_on`: service names differ between deployments and cannot co
 from the environment. The service starts regardless and reports any unreachable
 dependency in the dashboard header.
 
+### Multiple organizations
+
+A Langfuse API key is scoped to exactly one organization, so one org key does not
+cover an instance with several.
+
+Projects are discovered from **Postgres**, not from the API, specifically so this
+cannot go wrong quietly: every organization's projects appear in the dashboard
+whether or not a key exists for them. A project whose organization has no usable
+key is then skipped during an API-mode run, flagged `missing` in the Projects
+table, and called out in a banner naming the affected organizations. It is never
+silently passed over.
+
+Give each organization a key:
+
+```bash
+LANGFUSE_ORG_KEYS={"org-abc":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."},"org-def":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."}}
+```
+
+Organization ids are shown in the Projects table, or `SELECT id, name FROM organizations;`.
+`LANGFUSE_ORG_PUBLIC_KEY`/`_SECRET_KEY` still works as the single-org shorthand and
+can be combined with the map; on a multi-org instance the tool resolves which
+organization that pair belongs to before using it, rather than assuming.
+
+Two ways to skip this entirely: switch the traces module to **direct ClickHouse
+mode** (no API keys at all, org-agnostic), or list project keys explicitly in
+`LANGFUSE_PROJECT_KEYS`.
+
 ### Without an org-scoped API key
 
 Supply project-scoped keys explicitly instead:
