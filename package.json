@@ -1,0 +1,31 @@
+{
+  "name": "langfuse-open-retention",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Retention policy enforcement and storage dashboard for self-hosted Langfuse (Hobby/Core, no EE license).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsc -p tsconfig.json --watch & node --watch dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/selftest.test.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.716.0",
+    "@clickhouse/client": "^1.9.0",
+    "@fastify/static": "^8.0.3",
+    "fastify": "^5.2.0",
+    "node-cron": "^3.0.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  }
+}

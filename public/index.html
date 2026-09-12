@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Langfuse Retention</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧹</text></svg>"
+    />
+  </head>
+  <body>
+    <div id="login" class="login" hidden>
+      <form class="login-card" id="login-form">
+        <h1>Langfuse Retention</h1>
+        <p class="muted">Enter the admin password to continue.</p>
+        <input type="password" id="login-password" placeholder="Admin password" autocomplete="current-password" />
+        <button type="submit" class="primary">Sign in</button>
+        <p class="error" id="login-error" hidden></p>
+      </form>
+    </div>
+
+    <div id="app" hidden>
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">🧹</span>
+          <div>
+            <h1>Langfuse Retention</h1>
+            <p class="muted" id="instance-line">connecting…</p>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span class="badge" id="mode-badge">…</span>
+          <div class="pills" id="health-pills"></div>
+          <button class="ghost" id="logout">Sign out</button>
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="storage">Storage</button>
+        <button class="tab" data-tab="policy">Policy</button>
+        <button class="tab" data-tab="runs">Runs</button>
+      </nav>
+
+      <main>
+        <!-- ───────────────────────── Storage ───────────────────────── -->
+        <section class="panel" data-panel="storage">
+          <div class="section-head">
+            <div>
+              <h2>Storage footprint</h2>
+              <p class="muted" id="storage-meta">…</p>
+            </div>
+            <button class="ghost" id="refresh-storage">Recalculate</button>
+          </div>
+
+          <div class="cards" id="storage-cards"></div>
+          <div class="banner" id="backlog-banner" hidden></div>
+          <div class="breakdowns" id="storage-breakdowns"></div>
+        </section>
+
+        <!-- ───────────────────────── Policy ───────────────────────── -->
+        <section class="panel" data-panel="policy" hidden>
+          <div class="section-head">
+            <div>
+              <h2>Retention policy</h2>
+              <p class="muted">
+                Applies to traces, observations, scores, media, raw ingestion blobs and Postgres housekeeping.
+              </p>
+            </div>
+            <div class="actions">
+              <button class="ghost" id="preview-run">Preview (dry run)</button>
+              <button class="danger" id="live-run">Run now</button>
+              <button class="primary" id="save-policy">Save policy</button>
+            </div>
+          </div>
+
+          <p class="error" id="policy-error" hidden></p>
+          <p class="ok" id="policy-ok" hidden></p>
+
+          <div class="grid-2">
+            <div class="card">
+              <h3>Window</h3>
+              <label class="field">
+                <span>Default retention</span>
+                <div class="with-suffix">
+                  <input type="number" id="default-days" min="3" step="1" />
+                  <em>days</em>
+                </div>
+              </label>
+              <p class="hint" id="cutoff-hint"></p>
+
+              <label class="switch">
+                <input type="checkbox" id="dry-run" />
+                <span
+                  >Dry-run mode
+                  <em>nothing is deleted; runs only report what they would do</em>
+                </span>
+              </label>
+            </div>
+
+            <div class="card">
+              <h3>Schedule</h3>
+              <label class="switch">
+                <input type="checkbox" id="schedule-enabled" />
+                <span>Run automatically</span>
+              </label>
+              <div class="row">
+                <label class="field">
+                  <span>Cron</span>
+                  <input type="text" id="schedule-cron" placeholder="0 3 * * *" />
+                </label>
+                <label class="field">
+                  <span>Timezone</span>
+                  <input type="text" id="schedule-tz" placeholder="UTC" />
+                </label>
+              </div>
+              <p class="hint">Standard 5-field cron. Default <code>0 3 * * *</code> is 03:00 daily.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Projects</h3>
+            <p class="hint">
+              Leave an override blank to inherit the default. Set <code>0</code> to keep a project's data forever.
+            </p>
+            <div class="table-wrap">
+              <table id="projects-table">
+                <thead>
+                  <tr>
+                    <th>Project</th>
+                    <th>Effective window</th>
+                    <th>Cutoff</th>
+                    <th>Expired traces</th>
+                    <th>Override (days)</th>
+                    <th>API key</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="hint" id="expired-summary"></p>
+          </div>
+
+          <div class="card">
+            <h3>Modules</h3>
+            <div class="modules" id="modules"></div>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── Runs ───────────────────────── -->
+        <section class="panel" data-panel="runs" hidden>
+          <div class="section-head">
+            <div>
+              <h2>Run history</h2>
+              <p class="muted" id="runs-meta">…</p>
+            </div>
+            <button class="ghost" id="refresh-runs">Refresh</button>
+          </div>
+          <div id="runs-list" class="runs"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

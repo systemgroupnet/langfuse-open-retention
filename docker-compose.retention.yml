@@ -1,0 +1,119 @@
+# Retention service for a self-hosted Langfuse stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.retention.yml up -d --build
+#
+# Every setting below resolves in three tiers:
+#
+#   ${RETENTION_X:-${X:-stock-default}}
+#    │               │     └─ works out of the box on an unmodified Langfuse compose
+#    │               └─ picks up the value your stack already defines in the same .env
+#    └─ set this only when the retention service needs a *different* value
+#
+# So on a stock stack this file needs nothing but RETENTION_ADMIN_PASSWORD, and on
+# a customised stack you override in the .env you already have. Nothing in this
+# file should need editing — see .env.example for the full list.
+#
+# There is deliberately no `depends_on`: service names differ between deployments
+# and cannot come from the environment. The service starts regardless and reports
+# any unreachable dependency in the dashboard header.
+
+services:
+  langfuse-retention:
+    image: ${RETENTION_IMAGE:-langfuse-open-retention:latest}
+    build:
+      # Compose resolves this against the FIRST -f file's directory (your Langfuse
+      # folder), not against this file. The default assumes this repo was cloned
+      # there under its own name. Set RETENTION_BUILD_CONTEXT if it lives
+      # elsewhere, or skip building entirely by setting RETENTION_IMAGE to a
+      # prebuilt image and running `up -d` without `--build`.
+      context: ${RETENTION_BUILD_CONTEXT:-./langfuse-open-retention}
+    container_name: ${RETENTION_CONTAINER_NAME:-langfuse-retention}
+    restart: unless-stopped
+    mem_limit: ${RETENTION_MEM_LIMIT:-512m}
+    ports:
+      # Loopback by default: this dashboard deletes data. Set RETENTION_BIND_IP
+      # to expose it, and put TLS and an auth proxy in front if you do.
+      - ${RETENTION_BIND_IP:-127.0.0.1}:${RETENTION_PORT:-3050}:3050
+    environment:
+      # ── Dashboard ──────────────────────────────────────────────────────────
+      RETENTION_ADMIN_PASSWORD: ${RETENTION_ADMIN_PASSWORD:?set RETENTION_ADMIN_PASSWORD in your .env}
+      # Set this or every restart signs everyone out.
+      RETENTION_COOKIE_SECRET: ${RETENTION_COOKIE_SECRET:-}
+      RETENTION_AUTH_DISABLED: ${RETENTION_AUTH_DISABLED:-false}
+      LOG_LEVEL: ${RETENTION_LOG_LEVEL:-info}
+
+      # ── Langfuse API ───────────────────────────────────────────────────────
+      # Internal address of langfuse-web, not the published host port.
+      LANGFUSE_BASE_URL: ${RETENTION_LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      LANGFUSE_ORG_PUBLIC_KEY: ${LANGFUSE_ORG_PUBLIC_KEY:-}
+      LANGFUSE_ORG_SECRET_KEY: ${LANGFUSE_ORG_SECRET_KEY:-}
+      LANGFUSE_PROJECT_KEYS: ${LANGFUSE_PROJECT_KEYS:-}
+      LANGFUSE_AUTO_PROVISION_KEYS: ${LANGFUSE_AUTO_PROVISION_KEYS:-true}
+
+      # ── ClickHouse ─────────────────────────────────────────────────────────
+      CLICKHOUSE_URL: ${RETENTION_CLICKHOUSE_URL:-${CLICKHOUSE_URL:-http://clickhouse:8123}}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
+      # Only for a clustered deployment; leave empty for single-node.
+      CLICKHOUSE_CLUSTER_NAME: ${RETENTION_CLICKHOUSE_CLUSTER_NAME:-}
+
+      # ── Postgres ───────────────────────────────────────────────────────────
+      DATABASE_URL: ${RETENTION_DATABASE_URL:-${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/postgres}}
+
+      # ── Object storage ─────────────────────────────────────────────────────
+      # One internally reachable endpoint for all three use cases. Do NOT inherit
+      # LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT or _BATCH_EXPORT_ENDPOINT: Langfuse
+      # often points those at a browser-facing address (it signs upload URLs with
+      # them), which is unreachable from inside a container.
+      LANGFUSE_S3_ENDPOINT: ${RETENTION_S3_ENDPOINT:-${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://minio:9000}}
+      LANGFUSE_S3_ACCESS_KEY_ID: ${RETENTION_S3_ACCESS_KEY_ID:-${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}}
+      LANGFUSE_S3_SECRET_ACCESS_KEY: ${RETENTION_S3_SECRET_ACCESS_KEY:-${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}}
+      LANGFUSE_S3_REGION: ${RETENTION_S3_REGION:-${LANGFUSE_S3_EVENT_UPLOAD_REGION:-auto}}
+      LANGFUSE_S3_FORCE_PATH_STYLE: ${RETENTION_S3_FORCE_PATH_STYLE:-${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}}
+
+      # Buckets and prefixes are deployment-agnostic, so these inherit directly.
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}
+
+      # ── Storage reporting ──────────────────────────────────────────────────
+      # Named volumes are measured through the Docker socket. If your stack
+      # bind-mounts its data instead, `docker system df` cannot see it: point
+      # RETENTION_DISK_PATHS at those directories and RETENTION_HOSTFS_PATH at
+      # the parent to mount read-only. See .env.example.
+      RETENTION_DISK_PATHS: ${RETENTION_DISK_PATHS:-}
+      DOCKER_STATS_ENABLED: ${RETENTION_DOCKER_STATS_ENABLED:-true}
+      DOCKER_STATS_CACHE_SECONDS: ${RETENTION_DOCKER_STATS_CACHE_SECONDS:-900}
+    volumes:
+      # Policy and run history — the only state this tool owns. Back it up.
+      - ${RETENTION_DATA_VOLUME:-langfuse_retention_data}:/data
+      # Read-only, and only used for `GET /system/df` to size named volumes.
+      # Set RETENTION_DOCKER_SOCKET=/dev/null to withhold it; volume sizes then
+      # report as unavailable and everything else still works.
+      - ${RETENTION_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      # Read-only, for sizing bind-mounted data directories. The default is an
+      # inert file, so this mount does nothing until you point it somewhere.
+      - ${RETENTION_HOSTFS_PATH:-/etc/hostname}:/hostfs:ro
+    networks:
+      - default
+
+    # Reaching the dashboard through a reverse proxy: add the proxy's network to
+    # `networks` above and uncomment. Consider carefully — this UI deletes data.
+    # Terminate TLS and add an auth middleware; the tool's own password would
+    # otherwise cross the network in clear.
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.services.langfuse-retention.loadbalancer.server.port=3050
+    #   - traefik.http.routers.langfuse-retention.entrypoints=websecure
+    #   - traefik.http.routers.langfuse-retention.rule=Host(`${RETENTION_HOSTNAME:-retention.localhost}`)
+    #   - traefik.http.routers.langfuse-retention.service=langfuse-retention
+    #   - traefik.http.routers.langfuse-retention.middlewares=langfuse-retention-auth
+    #   - traefik.http.middlewares.langfuse-retention-auth.basicauth.users=${RETENTION_BASIC_AUTH:-}
+
+volumes:
+  langfuse_retention_data:
+    driver: local

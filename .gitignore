@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+data/
+.testdata/
+
+# Environment and site-specific configuration. This project is meant to be
+# published, so anything describing a particular deployment stays untracked.
+.env
+.env.*
+!.env.example
+
+# Local deployment notes: hostnames, paths, runbooks for your own server.
+*.local.md
+*.local.yml
+*.local.yaml
+*.local.json
