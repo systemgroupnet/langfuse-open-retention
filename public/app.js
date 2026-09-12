@@ -60,10 +60,14 @@ function el(tag, attrs = {}, ...children) {
 }
 
 async function api(path, options = {}) {
+  const hasBody = options.body !== undefined;
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    // Only declare a JSON body when there actually is one. Announcing
+    // `Content-Type: application/json` on a bodyless POST makes the server try to
+    // parse an empty payload and reject the request outright.
+    headers: { ...(hasBody ? { "Content-Type": "application/json" } : {}), ...options.headers },
+    body: hasBody ? JSON.stringify(options.body) : undefined,
   });
   if (response.status === 401) {
     showLogin();

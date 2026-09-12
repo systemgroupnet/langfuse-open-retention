@@ -275,3 +275,92 @@ test("the compose file passes every environment variable the app reads", async (
 
   assert.deepEqual(missing, [], `config.ts reads these but the compose file never passes them: ${missing.join(", ")}`);
 });
+
+/* ── HTTP layer ─────────────────────────────────────────────────────────── */
+
+/**
+ * Driven through `app.inject()`, so these exercise the real routes, real body
+ * parsing and real auth without binding a port or touching a database.
+ *
+ * Every previous test here was pure-logic, which is precisely why a broken
+ * logout button shipped: nothing ever issued an actual request.
+ */
+const { buildServer } = await import("./server.js");
+
+const { loadState } = await import("./state.js");
+
+async function withServer<T>(fn: (app: Awaited<ReturnType<typeof buildServer>>) => Promise<T>): Promise<T> {
+  // Same order as start-up: routes read persisted state, so it must exist first.
+  await loadState();
+  const app = await buildServer();
+  try {
+    return await fn(app);
+  } finally {
+    await app.close();
+  }
+}
+
+const AUTH = { authorization: "Bearer test" };
+
+test("a bodyless POST with a JSON content-type is accepted", async () => {
+  await withServer(async (app) => {
+    // Exactly what the browser sent when the logout button failed.
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/logout",
+      headers: { ...AUTH, "content-type": "application/json" },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { ok: true });
+  });
+});
+
+test("logout clears the session cookie", async () => {
+  await withServer(async (app) => {
+    const response = await app.inject({ method: "POST", url: "/api/logout", headers: AUTH });
+    const cookie = response.headers["set-cookie"];
+    assert.ok(String(cookie).includes("Max-Age=0"), `expected an expiring cookie, got ${cookie}`);
+  });
+});
+
+test("malformed JSON is still rejected, rather than swallowed as empty", async () => {
+  await withServer(async (app) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/login",
+      headers: { "content-type": "application/json" },
+      payload: "{not json",
+    });
+    assert.equal(response.statusCode, 400);
+  });
+});
+
+test("an empty body never fails at the parser, only at validation", async () => {
+  await withServer(async (app) => {
+    for (const url of ["/api/logout", "/api/acknowledge-risk", "/api/runs"]) {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        headers: { ...AUTH, "content-type": "application/json" },
+      });
+      // A route may still reject the *contents* — acknowledge-risk demands an
+      // explicit confirmation string. What must never happen is the request
+      // dying in body parsing before the handler sees it.
+      assert.ok(
+        !response.body.includes("FST_ERR_CTP_EMPTY_JSON_BODY"),
+        `${url} died in the body parser: ${response.body}`,
+      );
+    }
+  });
+});
+
+test("the API is closed without credentials", async () => {
+  await withServer(async (app) => {
+    for (const url of ["/api/policy", "/api/projects", "/api/storage", "/api/runs"]) {
+      const response = await app.inject({ method: "GET", url });
+      assert.equal(response.statusCode, 401, `${url} should require auth`);
+    }
+    // Session and login stay open so the UI can bootstrap.
+    assert.equal((await app.inject({ method: "GET", url: "/api/session" })).statusCode, 200);
+  });
+});
