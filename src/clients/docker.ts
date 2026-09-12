@@ -106,12 +106,54 @@ async function volumesInOwnStack(): Promise<Set<string> | null> {
   }
 }
 
-export async function pingDocker(): Promise<{ ok: boolean; version?: string; error?: string }> {
-  if (!config.docker.enabled) return { ok: false, error: "disabled via DOCKER_STATS_ENABLED" };
+export interface DockerPing {
+  ok: boolean;
+  /** Deliberately switched off, as opposed to failing — the UI shows these differently. */
+  disabled?: boolean;
+  version?: string;
+  error?: string;
+}
+
+/**
+ * Docker socket reachability, with the failure explained rather than just reported.
+ *
+ * The three realistic causes look identical in a raw errno, so each gets the
+ * sentence that actually resolves it.
+ */
+export async function pingDocker(): Promise<DockerPing> {
+  if (!config.docker.enabled) {
+    return {
+      ok: false,
+      disabled: true,
+      error: "Turned off by RETENTION_DOCKER_STATS_ENABLED=false. Named-volume sizes are not collected.",
+    };
+  }
   try {
     const v = await dockerGet<{ Version: string }>("/version", 5_000);
     return { ok: true, version: v.Version };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    const message = (e as Error).message;
+    const code = (e as NodeJS.ErrnoException).code;
+
+    if (code === "ENOENT") {
+      return {
+        ok: false,
+        error:
+          `No socket at ${config.docker.socketPath}. Mount it read-only ` +
+          `(-v /var/run/docker.sock:/var/run/docker.sock:ro), or set ` +
+          `RETENTION_DOCKER_STATS_ENABLED=false to stop asking.`,
+      };
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      return {
+        ok: false,
+        error:
+          `Permission denied on ${config.docker.socketPath}. The container joins the socket's group at ` +
+          `start-up, so this usually means the socket was mounted after the container started, or the ` +
+          `host uses rootless Docker with a socket elsewhere. Recreate the container; if it persists, ` +
+          `check 'ls -ln ${config.docker.socketPath}' inside and outside.`,
+      };
+    }
+    return { ok: false, error: message };
   }
 }

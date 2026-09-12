@@ -7,7 +7,34 @@ It deletes traces, observations, scores, media and — critically — the **raw 
 never cleans up on any license**, on a configurable window (15 days by default), and shows you exactly where your
 disk is going.
 
+![Screenshot](./screenshot.png)
+
 ---
+
+> ## ⚠️ Read this before you run it
+>
+> **This tool permanently deletes data from your Langfuse instance. There is no undo.**
+>
+> - **By default it writes directly to ClickHouse**, issuing `ALTER TABLE … DROP PARTITION`
+>   and `ALTER TABLE … DELETE` against Langfuse's own tables and bypassing Langfuse
+>   entirely. It therefore depends on Langfuse's **internal schema**, which Langfuse is
+>   free to change in any release. A Langfuse upgrade could cause it to delete the wrong
+>   data or stop working. Table existence is introspected at runtime to soften this, but
+>   it cannot be eliminated.
+> - It also **deletes objects from object storage and rows from Postgres** — raw ingestion
+>   blobs, media, batch exports, audit logs and job history — according to your policy.
+> - **Back up ClickHouse, MinIO and Postgres before your first live run.**
+> - It is **not affiliated with, endorsed by, or supported by Langfuse**.
+>
+> **Use entirely at your own risk.** This software is provided "as is", without warranty of
+> any kind, express or implied. The authors accept no liability for data loss, downtime, or
+> any other damage arising from its use. You alone are responsible for what it deletes.
+>
+> Mitigations that are on by default: it ships in **dry-run mode** and deletes nothing until
+> you explicitly turn that off, and it asks you to **accept a risk notice once** before any
+> live deletion is permitted — enforced server-side, so scheduled and scripted runs are
+> blocked too. If you would rather nothing touched ClickHouse directly, switch the traces
+> module to **Langfuse API** mode, which uses only documented public endpoints.
 
 ## Why this exists
 
@@ -25,20 +52,30 @@ that Langfuse's retention explicitly does *not* touch even on EE.
 
 ## How it deletes
 
-A deliberate hybrid, so that the safe path is used wherever a safe path exists:
-
 | Data | Mechanism | Why |
 |---|---|---|
-| Traces, observations, scores | `DELETE /api/public/traces` | Langfuse's own public API. The worker performs exactly the cleanup the EE retention job does, including the trace's blobs. Zero schema coupling. |
-| Raw ingestion event blobs | Direct object-storage sweep | No API exists. Keys are `{projectId}/…` or `otel/{projectId}/…`, so per-project retention is applied exactly, not with one global cutoff. |
+| Traces, observations, scores | Direct ClickHouse *(default)* | Drops fully-expired monthly partitions outright — instant, no merge cost — then range-deletes the month straddling the cutoff. No API keys, covers every project in every organization. |
+| Raw ingestion event blobs | Object-storage sweep | No API exists for these. Keys are `{projectId}/…` or `otel/{projectId}/…`, so per-project retention applies exactly, not via one global cutoff. |
 | Media assets | Postgres `media` table → object storage | The table carries the exact key and real `content_length`, so reclaimed bytes are measured rather than estimated. Assets referenced by a dataset item are never deleted. |
 | Batch exports | Object-storage sweep + row cleanup | Stale the day after download; gets its own short window. |
-| Postgres housekeeping | Chunked `DELETE` | Tables no Langfuse license ever prunes. |
+| Postgres housekeeping | Chunked `DELETE` | Tables no Langfuse licence ever prunes. |
 
-There is also an optional **direct ClickHouse mode** for traces (Policy → Modules → Deletion method). It drops
-whole monthly partitions that are entirely expired — instant, no merge cost — then range-deletes the month
-straddling the cutoff. Much faster and needs no API keys, but it bypasses Langfuse's own cleanup, so object
-storage is left entirely to the blob modules. The API mode is the default for a reason.
+**Why ClickHouse mode is the default.** This tool exists for installs *without* an
+Enterprise licence — and on those, organization-scoped API keys are unavailable
+(they need the `admin-api` entitlement). Without them the API path cannot mint its
+own project keys, so it would purge nothing until someone pasted in a key per
+project. A default that does nothing out of the box is not a default.
+
+Only the traces module has a choice of mechanism. Everything else already works
+without the API, so switching modes never changes what gets cleaned — object
+storage included.
+
+**The alternative: API mode.** Policy → Modules → Traces → Deletion method →
+*Langfuse API*. This calls Langfuse's own `DELETE /api/public/traces`, so its worker
+performs exactly the cleanup the Enterprise retention job does, with zero coupling
+to the ClickHouse schema. It needs a project-scoped key per project
+(`LANGFUSE_PROJECT_KEYS`), which project settings provide on every plan. Choose it
+if schema independence matters more to you than setup cost.
 
 **Nothing assumes a schema.** Table existence is introspected at runtime (`blob_storage_file_log` was called
 `event_log` on older v3 builds and dropped in v4), so an upgrade degrades gracefully rather than erroring.
@@ -56,12 +93,12 @@ Add to the `.env` your Langfuse stack already uses:
 ```bash
 RETENTION_ADMIN_PASSWORD=<a strong password>
 RETENTION_COOKIE_SECRET=$(openssl rand -hex 32)
-
-# Recommended: an organization-scoped key so the tool can see every project and
-# mint its own project-scoped keys. Organization Settings -> API Keys.
-LANGFUSE_ORG_PUBLIC_KEY=pk-lf-...
-LANGFUSE_ORG_SECRET_KEY=sk-lf-...
 ```
+
+That is the whole required configuration. No API keys: the default deletion path
+talks to ClickHouse, Postgres and object storage directly. Add keys only if you
+switch the traces module to API mode — see
+[API keys](#api-keys-which-kind-and-what-core-actually-allows).
 
 Then:
 
@@ -120,44 +157,51 @@ There is no `depends_on`: service names differ between deployments and cannot co
 from the environment. The service starts regardless and reports any unreachable
 dependency in the dashboard header.
 
-### Multiple organizations
+### API keys: which kind, and what Core actually allows
 
-A Langfuse API key is scoped to exactly one organization, so one org key does not
-cover an instance with several.
+Langfuse has two kinds of key, both shaped `pk-lf-…` / `sk-lf-…`:
 
-Projects are discovered from **Postgres**, not from the API, specifically so this
-cannot go wrong quietly: every organization's projects appear in the dashboard
-whether or not a key exists for them. A project whose organization has no usable
-key is then skipped during an API-mode run, flagged `missing` in the Projects
-table, and called out in a banner naming the affected organizations. It is never
-silently passed over.
+| | Project key | Organization key |
+|---|---|---|
+| Created in | **Project** Settings → API Keys | **Organization** Settings → API Keys |
+| Authenticates as | one project | a whole organization |
+| Lets this tool | delete that project's traces | enumerate its projects and mint project keys |
+| Available on | every plan, Core included | **Enterprise only** |
 
-Give each organization a key:
+> **Organization keys are Enterprise-gated.** The Organization Settings → API Keys
+> tab is rendered only with the `admin-api` entitlement, which the `oss` plan does
+> not carry, so on a self-hosted Core install it does not appear at all. If that is
+> you — and it probably is, since this tool exists for Core installs — use one of
+> the two options below and ignore `LANGFUSE_ORG_KEYS` entirely.
 
-```bash
-LANGFUSE_ORG_KEYS={"org-abc":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."},"org-def":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."}}
-```
-
-Organization ids are shown in the Projects table, or `SELECT id, name FROM organizations;`.
-`LANGFUSE_ORG_PUBLIC_KEY`/`_SECRET_KEY` still works as the single-org shorthand and
-can be combined with the map; on a multi-org instance the tool resolves which
-organization that pair belongs to before using it, rather than assuming.
-
-Two ways to skip this entirely: switch the traces module to **direct ClickHouse
-mode** (no API keys at all, org-agnostic), or list project keys explicitly in
-`LANGFUSE_PROJECT_KEYS`.
-
-### Without an org-scoped API key
-
-Supply project-scoped keys explicitly instead:
+**Option A — a project key per project.** Only needed if you switch the traces
+module to API mode, for its schema independence. Create a key under each project's
+own settings, then:
 
 ```bash
-LANGFUSE_PROJECT_KEYS={"cm0abc123":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."}}
+LANGFUSE_PROJECT_KEYS='{"<projectId>":{"publicKey":"pk-lf-...","secretKey":"sk-lf-..."}}'
 ```
 
-Or switch the traces module to direct ClickHouse mode, which needs no keys at all.
-Projects without a usable key are skipped and flagged in the Projects table — never
-silently ignored.
+Project ids are listed in the dashboard's Projects table, which works with no keys
+configured at all — so start the service first, read the ids off it, then fill this
+in. Scales with project count; organizations are irrelevant on this path.
+
+**Option B — direct ClickHouse mode.** The default, so there is nothing to do. No
+keys, and it covers every project in every organization uniformly. Object storage
+is still handled, by the blob and media modules, which never use the API.
+
+`LANGFUSE_ORG_KEYS` (one entry per organization id) and the
+`LANGFUSE_ORG_PUBLIC_KEY`/`_SECRET_KEY` shorthand remain supported for Enterprise
+installs, where the tool can mint its own project keys. An organization key only
+ever sees its own organization, so a multi-org Enterprise instance needs one per
+organization.
+
+### Coverage is never silent
+
+Projects are discovered from **Postgres**, not the API, so every project in every
+organization appears in the dashboard whether or not a key exists for it. A project
+without a usable key is skipped during an API-mode run, flagged `missing` in the
+Projects table, named in a banner, and the run finishes `partial` rather than `ok`.
 
 ### If your stack bind-mounts its data
 
@@ -352,3 +396,15 @@ public/         dashboard (no build step, no framework)
 
 Adding a data class is one file in `src/purge/` exporting `(ctx) => Promise<ModuleResult>`, registered in the
 `MODULES` array in `runner.ts`. Every module must honour `ctx.policy.dryRun`.
+
+## Licence and liability
+
+Provided **as is**, without warranty of any kind, express or implied, including but not
+limited to the warranties of merchantability, fitness for a particular purpose and
+non-infringement. In no event shall the authors or copyright holders be liable for any
+claim, damages or other liability, whether in an action of contract, tort or otherwise,
+arising from, out of, or in connection with this software or its use.
+
+This project is independent. It is not affiliated with, endorsed by, or supported by
+Langfuse. "Langfuse" is the trademark of its respective owner and is used here only to
+describe what this tool interoperates with.

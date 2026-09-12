@@ -20,7 +20,7 @@ import { buildContext } from "../purge/context.js";
 import { expiredTraceCounts } from "../purge/traces.js";
 import { currentRun, isRunning, runRetention } from "../purge/runner.js";
 import { applySchedule, schedulerStatus } from "../scheduler.js";
-import { getPolicy, getRun, getRuns, setPolicy } from "../state.js";
+import { acknowledgeRisk, getPolicy, getRun, getRuns, riskAcknowledged, riskAcknowledgedAt, setPolicy } from "../state.js";
 import { invalidateStorageCache, storageSnapshot } from "../storage/stats.js";
 import { MIN_RETENTION_DAYS, ValidationError, validatePolicy } from "./policy-validation.js";
 
@@ -36,7 +36,18 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
     authenticated: isAuthenticated(request),
     authRequired: !config.auth.disabled,
     authConfigured: authConfigured(),
+    riskAcknowledged: riskAcknowledged(),
+    riskAcknowledgedAt: riskAcknowledgedAt(),
   }));
+
+  /** One-time acceptance of the risk notice, recorded per installation. */
+  app.post("/api/acknowledge-risk", async (request, reply) => {
+    const body = (request.body ?? {}) as { confirm?: string };
+    if (body.confirm !== "I UNDERSTAND") {
+      return reply.code(400).send({ error: 'Acknowledgement requires confirm: "I UNDERSTAND".' });
+    }
+    return { acknowledged: true, at: await acknowledgeRisk() };
+  });
 
   app.post("/api/login", async (request, reply) => {
     const body = (request.body ?? {}) as { password?: string };
@@ -189,6 +200,13 @@ export async function registerApi(app: FastifyInstance): Promise<void> {
         return reply
           .code(400)
           .send({ error: "Policy is in dry-run mode. Turn dry-run off in Policy before running live." });
+      }
+      if (!riskAcknowledged()) {
+        return reply.code(403).send({
+          error:
+            "Live deletion is blocked until the risk notice is accepted. Reload the dashboard and accept it, " +
+            "or set RETENTION_RISK_ACKNOWLEDGED=true for a headless deployment.",
+        });
       }
     }
 

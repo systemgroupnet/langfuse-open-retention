@@ -86,8 +86,49 @@ function flash(node, message, ms = 4000) {
 
 function showLogin() {
   $("#login").hidden = false;
+  $("#risk-gate").hidden = true;
   $("#app").hidden = true;
   clearInterval(state.pollTimer);
+}
+
+/**
+ * First-run risk notice.
+ *
+ * Acceptance is stored server-side, per installation, so it is a statement about
+ * this deployment rather than a banner each browser dismisses separately. Live
+ * deletion stays blocked until it is accepted — the server enforces that too, so
+ * the dialog is a gate rather than decoration.
+ */
+function showRiskGate() {
+  $("#login").hidden = true;
+  $("#app").hidden = true;
+  $("#risk-gate").hidden = false;
+}
+
+$("#risk-confirm").addEventListener("change", (event) => {
+  $("#risk-accept").disabled = !event.target.checked;
+});
+
+$("#risk-accept").addEventListener("click", async () => {
+  const button = $("#risk-accept");
+  button.disabled = true;
+  try {
+    await api("/api/acknowledge-risk", { method: "POST", body: { confirm: "I UNDERSTAND" } });
+    $("#risk-gate").hidden = true;
+    await enterApp();
+  } catch (e) {
+    button.disabled = false;
+    flash($("#risk-error"), e.message, 8000);
+  }
+});
+
+async function enterApp() {
+  $("#login").hidden = true;
+  $("#risk-gate").hidden = true;
+  $("#app").hidden = false;
+  await refreshAll();
+  clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(refreshStatus, 5000);
 }
 
 async function boot() {
@@ -99,10 +140,11 @@ async function boot() {
     }
     return;
   }
-  $("#login").hidden = true;
-  $("#app").hidden = false;
-  await refreshAll();
-  state.pollTimer = setInterval(refreshStatus, 5000);
+  if (!session.riskAcknowledged) {
+    showRiskGate();
+    return;
+  }
+  await enterApp();
 }
 
 $("#login-form").addEventListener("submit", async (event) => {
@@ -150,15 +192,24 @@ async function refreshStatus() {
   badge.className = `badge${!dryRun && !s.run.active ? " live" : ""}`;
 
   const checks = [
-    ["Langfuse", s.langfuse.ok, s.langfuse.error],
-    ["ClickHouse", s.clickhouse.ok, s.clickhouse.error],
-    ["Postgres", s.postgres.ok, s.postgres.error],
-    ["MinIO", s.objectStorage.events.ok, s.objectStorage.events.error],
-    ["Docker", s.docker.ok, s.docker.error],
+    ["Langfuse", s.langfuse.ok, s.langfuse.error, false],
+    ["ClickHouse", s.clickhouse.ok, s.clickhouse.error, false],
+    ["Postgres", s.postgres.ok, s.postgres.error, false],
+    ["MinIO", s.objectStorage.events.ok, s.objectStorage.events.error, false],
+    // A feature switched off on purpose is not a failure, so it reads neutral
+    // rather than red — otherwise a healthy instance looks permanently broken.
+    ["Docker", s.docker.ok, s.docker.error, Boolean(s.docker.disabled)],
   ];
   $("#health-pills").replaceChildren(
-    ...checks.map(([name, ok, error]) =>
-      el("span", { class: `pill ${ok ? "up" : "down"}`, title: error || `${name} reachable` }, name),
+    ...checks.map(([name, ok, error, disabled]) =>
+      el(
+        "span",
+        {
+          class: `pill ${disabled ? "" : ok ? "up" : "down"}`.trim(),
+          title: error || `${name} reachable`,
+        },
+        disabled ? `${name} off` : name,
+      ),
     ),
   );
 
@@ -331,16 +382,18 @@ const MODULE_SPECS = [
     key: "traces",
     title: "Traces, observations and scores",
     description:
-      "Deletes expired traces and everything hanging off them. In API mode this calls Langfuse's own " +
-      "DELETE /api/public/traces, so the worker performs the same cleanup the Enterprise retention job does.",
+      "Deletes expired traces and everything hanging off them. Direct ClickHouse mode needs no API keys and " +
+      "covers every project in every organization — the default, because organization keys are Enterprise-only. " +
+      "API mode instead calls Langfuse's own DELETE /api/public/traces, avoiding any schema coupling, but needs " +
+      "a project-scoped key per project.",
     fields: [
       {
         key: "mode",
         label: "Deletion method",
         type: "select",
         options: [
-          ["api", "Langfuse API (safe)"],
-          ["clickhouse", "Direct ClickHouse (fast)"],
+          ["clickhouse", "Direct ClickHouse (no keys, default)"],
+          ["api", "Langfuse API (needs a key per project)"],
         ],
       },
       { key: "batchSize", label: "Trace IDs per request", type: "number", min: 1, max: 1000 },

@@ -58,7 +58,11 @@ export function validatePolicy(input: unknown): Policy {
   const scheduleCron = typeof raw.schedule?.cron === "string" ? raw.schedule.cron : base.schedule.cron;
   if (!cron.validate(scheduleCron)) throw new ValidationError(`Not a valid cron expression: ${scheduleCron}`);
 
-  const mode: TraceDeleteMode = raw.modules?.traces?.mode === "clickhouse" ? "clickhouse" : "api";
+  // An unrecognised value falls back to the shipped default rather than to a
+  // hardcoded one, so the two cannot drift apart.
+  const requested = raw.modules?.traces?.mode;
+  const mode: TraceDeleteMode =
+    requested === "clickhouse" || requested === "api" ? requested : base.modules.traces.mode;
 
   return {
     version: 1,

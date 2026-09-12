@@ -595,3 +595,64 @@ td input[type="number"] {
   padding: 28px;
   text-align: center;
 }
+
+/* ── first-run risk notice ─────────────────────────── */
+.risk-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 26px 28px;
+  width: min(640px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+.risk-card h1 {
+  font-size: 19px;
+  margin-bottom: 10px;
+}
+.risk-lede {
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.risk-list {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.risk-list strong {
+  color: var(--text);
+}
+.risk-list code {
+  font-size: 11.5px;
+}
+.risk-safer {
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 7px;
+  padding: 12px 14px;
+  margin: 0 0 18px;
+}
+.risk-safer strong {
+  color: var(--text);
+}
+.risk-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+.risk-check input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+#risk-accept {
+  width: 100%;
+  padding: 10px;
+}

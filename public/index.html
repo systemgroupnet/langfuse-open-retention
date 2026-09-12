@@ -21,6 +21,57 @@
       </form>
     </div>
 
+    <div id="risk-gate" class="login" hidden>
+      <div class="risk-card">
+        <h1>Before you use this</h1>
+        <p class="risk-lede">
+          This tool <strong>permanently deletes data</strong> from your Langfuse instance. Deletion cannot be
+          undone. Read this once, then it will not ask again.
+        </p>
+
+        <ul class="risk-list">
+          <li>
+            <strong>It writes directly to ClickHouse by default.</strong> It issues
+            <code>ALTER TABLE … DROP PARTITION</code> and <code>ALTER TABLE … DELETE</code> against Langfuse's
+            own tables, bypassing Langfuse entirely. That means it depends on Langfuse's internal schema, which
+            Langfuse is free to change in any release. A Langfuse upgrade could make it delete the wrong thing
+            or fail.
+          </li>
+          <li>
+            <strong>It also deletes objects from object storage and rows from Postgres</strong> — raw ingestion
+            blobs, media assets, batch exports, audit logs and job history, according to your policy.
+          </li>
+          <li>
+            <strong>There is no undo and no recycle bin.</strong> Take a ClickHouse, MinIO and Postgres backup
+            before your first live run.
+          </li>
+          <li>
+            <strong>It is not affiliated with, endorsed by, or supported by Langfuse.</strong> It is an
+            independent tool, provided as-is without warranty of any kind. You use it entirely at your own
+            risk, and you are responsible for any data it removes.
+          </li>
+        </ul>
+
+        <p class="risk-safer">
+          Safer path: leave <strong>dry-run mode on</strong> (it is, by default), run
+          <strong>Preview</strong>, and read the report before arming anything. If you would rather not have
+          anything touch ClickHouse directly, switch Policy → Modules → Traces → Deletion method to
+          <strong>Langfuse API</strong>, which uses only documented endpoints.
+        </p>
+
+        <label class="risk-check">
+          <input type="checkbox" id="risk-confirm" />
+          <span>
+            I understand this permanently deletes data, that it is unsupported and provided without warranty,
+            and I accept the risk.
+          </span>
+        </label>
+
+        <button class="danger" id="risk-accept" disabled>I understand — continue</button>
+        <p class="error" id="risk-error" hidden></p>
+      </div>
+    </div>
+
     <div id="app" hidden>
       <header class="topbar">
         <div class="brand">

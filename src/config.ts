@@ -103,6 +103,12 @@ export const config = (() => {
     dataDir: str("RETENTION_DATA_DIR", "/data"),
     logLevel: str("LOG_LEVEL", "info"),
 
+    /**
+     * Pre-accept the risk notice, for headless or IaC deployments that never
+     * open the dashboard. Equivalent to clicking "I understand" once.
+     */
+    riskAcknowledged: bool("RETENTION_RISK_ACKNOWLEDGED", false),
+
     auth: {
       /** Shared admin password for the dashboard. Required unless auth is disabled. */
       password: optional("RETENTION_ADMIN_PASSWORD"),

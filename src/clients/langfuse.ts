@@ -35,7 +35,20 @@ class LangfuseApiError extends Error {
     readonly path: string,
     body: string,
   ) {
-    super(`Langfuse API ${status} on ${path}: ${body.slice(0, 500)}`);
+    // Organization-scoped endpoints are gated behind the `admin-api`
+    // entitlement, which self-hosted Core does not carry — so a 401/403 here is
+    // almost always a licensing limit rather than a wrong key, and saying so
+    // saves a long hunt for a typo that isn't there.
+    const orgRouteDenied =
+      path.includes("/organizations/") && (status === 401 || status === 403 || status === 404);
+    super(
+      `Langfuse API ${status} on ${path}: ${body.slice(0, 300)}` +
+        (orgRouteDenied
+          ? " — organization-scoped API keys require the Enterprise `admin-api` entitlement. " +
+            "On a Core install, use LANGFUSE_PROJECT_KEYS (one key per project) or switch the " +
+            "traces module to direct ClickHouse mode, which needs no API keys."
+          : ""),
+    );
     this.name = "LangfuseApiError";
   }
 }

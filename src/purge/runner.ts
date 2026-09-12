@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { errorMessage, log } from "../logger.js";
-import { getPolicy, saveRun } from "../state.js";
+import { getPolicy, riskAcknowledged, saveRun } from "../state.js";
 import type { ModuleResult, Policy, RunReport } from "../types.js";
 import { buildContext, type RunContext } from "./context.js";
 import { purgeBatchExports } from "./batchExports.js";
@@ -54,6 +54,16 @@ export async function runRetention(options: RunOptions): Promise<RunReport> {
 
   const policy = options.policyOverride ?? getPolicy();
   const effective: Policy = options.forceDryRun ? { ...policy, dryRun: true } : policy;
+
+  // Enforced here rather than only in the HTTP route, so a scheduled run or a
+  // direct API call cannot delete anything before someone has accepted what this
+  // tool does. Dry runs are always allowed — they are how you find out.
+  if (!effective.dryRun && !riskAcknowledged()) {
+    throw new Error(
+      "Live deletion is blocked until the risk notice is accepted. Open the dashboard and accept it, " +
+        "or set RETENTION_RISK_ACKNOWLEDGED=true for a headless deployment. Dry runs are unaffected.",
+    );
+  }
   const startedAt = new Date();
 
   const report: RunReport = {

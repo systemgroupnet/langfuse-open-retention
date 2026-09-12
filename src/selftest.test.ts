@@ -168,12 +168,29 @@ test("rejects project ids that could be smuggled into an identifier position", (
   );
 });
 
-test("unknown deletion methods fall back to the safe one", () => {
+test("unknown deletion methods fall back to the shipped default", () => {
   const policy = validatePolicy({
     ...DEFAULT_POLICY,
     modules: { ...DEFAULT_POLICY.modules, traces: { ...DEFAULT_POLICY.modules.traces, mode: "rm -rf" } },
   });
-  assert.equal(policy.modules.traces.mode, "api");
+  assert.equal(policy.modules.traces.mode, DEFAULT_POLICY.modules.traces.mode);
+});
+
+test("both deletion methods survive a round trip through validation", () => {
+  for (const mode of ["api", "clickhouse"] as const) {
+    const policy = validatePolicy({
+      ...DEFAULT_POLICY,
+      modules: { ...DEFAULT_POLICY.modules, traces: { ...DEFAULT_POLICY.modules.traces, mode } },
+    });
+    assert.equal(policy.modules.traces.mode, mode, `${mode} must not be silently rewritten`);
+  }
+});
+
+test("ships in the configuration a licence-free install can actually use", () => {
+  // The whole point of this tool is instances without an Enterprise licence,
+  // where organization keys — and so key auto-provisioning — are unavailable.
+  assert.equal(DEFAULT_POLICY.modules.traces.mode, "clickhouse");
+  assert.equal(DEFAULT_POLICY.dryRun, true, "and it must still delete nothing until armed");
 });
 
 test("a partial policy body keeps the defaults for everything it omits", () => {
@@ -220,4 +237,41 @@ test("detects whether the instance has one organization or several", () => {
     "projects with unknown org (API-only discovery) must not force multi-org handling",
   );
   assert.equal(isSingleOrg([{ orgId: null }, { orgId: null }]), true);
+});
+
+/* ── compose wiring ─────────────────────────────────────────────────────── */
+
+/**
+ * Every setting the app reads must actually reach the container.
+ *
+ * A variable added to config.ts but forgotten in docker-compose.retention.yml
+ * fails silently: the feature simply never activates, with no error anywhere.
+ * That is exactly how LANGFUSE_ORG_KEYS shipped broken once.
+ */
+test("the compose file passes every environment variable the app reads", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const root = new URL("../", import.meta.url);
+  const configSource = await readFile(new URL("src/config.ts", root), "utf8");
+  const compose = await readFile(new URL("docker-compose.retention.yml", root), "utf8");
+
+  // Names read directly, e.g. str("CLICKHOUSE_URL", ...).
+  const read = new Set(
+    [...configSource.matchAll(/(?:str|optional|bool|int|parseKeyMap)\(\s*(?:optional\(\s*)?"([A-Z0-9_]+)"/g)].map(
+      (m) => m[1] as string,
+    ),
+  );
+  const passed = new Set([...compose.matchAll(/^ {6}([A-Z0-9_]+):/gm)].map((m) => m[1] as string));
+
+  // Container-internal: changing these from outside would break the published
+  // port or the volume mount, so they are deliberately not exposed.
+  const internal = new Set(["PORT", "HOST", "RETENTION_DATA_DIR", "DOCKER_SOCKET_PATH", "POSTGRES_MAX_CONNECTIONS"]);
+  // Suffixes of the templated LANGFUSE_S3_<KIND>_* names, plus their shared fallbacks.
+  const templated = /^(BUCKET|PREFIX|ENDPOINT|REGION|ACCESS_KEY_ID|SECRET_ACCESS_KEY|FORCE_PATH_STYLE)$/;
+  const s3Shared = /^LANGFUSE_S3_(BUCKET|REGION|FORCE_PATH_STYLE)$/;
+
+  const missing = [...read].filter(
+    (name) => !passed.has(name) && !internal.has(name) && !templated.test(name) && !s3Shared.test(name),
+  );
+
+  assert.deepEqual(missing, [], `config.ts reads these but the compose file never passes them: ${missing.join(", ")}`);
 });

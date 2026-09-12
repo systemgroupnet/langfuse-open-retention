@@ -40,15 +40,26 @@ services:
       # Set this or every restart signs everyone out.
       RETENTION_COOKIE_SECRET: ${RETENTION_COOKIE_SECRET:-}
       RETENTION_AUTH_DISABLED: ${RETENTION_AUTH_DISABLED:-false}
+      RETENTION_SESSION_HOURS: ${RETENTION_SESSION_HOURS:-12}
+      # The dashboard asks you to accept a risk notice once before it will delete
+      # anything. Set this to true to pre-accept it for a headless deployment that
+      # never opens the UI. Live runs stay blocked until one or the other happens.
+      RETENTION_RISK_ACKNOWLEDGED: ${RETENTION_RISK_ACKNOWLEDGED:-false}
       LOG_LEVEL: ${RETENTION_LOG_LEVEL:-info}
 
       # ── Langfuse API ───────────────────────────────────────────────────────
       # Internal address of langfuse-web, not the published host port.
       LANGFUSE_BASE_URL: ${RETENTION_LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      # Single-organization shorthand.
       LANGFUSE_ORG_PUBLIC_KEY: ${LANGFUSE_ORG_PUBLIC_KEY:-}
       LANGFUSE_ORG_SECRET_KEY: ${LANGFUSE_ORG_SECRET_KEY:-}
+      # One key per organization: {"<orgId>":{"publicKey":"...","secretKey":"..."}}
+      # An org key only ever sees its own organization, so a multi-org instance
+      # needs this; without it those projects are reported as skipped.
+      LANGFUSE_ORG_KEYS: ${LANGFUSE_ORG_KEYS:-}
       LANGFUSE_PROJECT_KEYS: ${LANGFUSE_PROJECT_KEYS:-}
       LANGFUSE_AUTO_PROVISION_KEYS: ${LANGFUSE_AUTO_PROVISION_KEYS:-true}
+      LANGFUSE_REQUEST_TIMEOUT_MS: ${LANGFUSE_REQUEST_TIMEOUT_MS:-60000}
 
       # ── ClickHouse ─────────────────────────────────────────────────────────
       CLICKHOUSE_URL: ${RETENTION_CLICKHOUSE_URL:-${CLICKHOUSE_URL:-http://clickhouse:8123}}

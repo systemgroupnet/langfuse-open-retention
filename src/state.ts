@@ -16,7 +16,19 @@ export const DEFAULT_POLICY: Policy = {
   modules: {
     traces: {
       enabled: true,
-      mode: "api",
+      // ClickHouse by default, not the API.
+      //
+      // This tool exists for installs without an Enterprise licence, and on those
+      // the API path needs a project-scoped key pasted in per project: organization
+      // keys, which would let it mint those itself, are gated behind the `admin-api`
+      // entitlement. Defaulting to API mode would mean a fresh install purges
+      // nothing and reports `partial` until someone configures N keys.
+      //
+      // Direct ClickHouse mode needs no keys, covers every project in every
+      // organization, and object storage is unaffected — the blob, media and
+      // export modules never use the API either way. The cost is coupling to the
+      // ClickHouse schema, which is why table existence is introspected at runtime.
+      mode: "clickhouse",
       batchSize: 100,
       maxTracesPerRun: 200_000,
       dropWholePartitions: true,
@@ -44,6 +56,8 @@ interface PersistedState {
   policy: Policy;
   /** Newest first. Capped. */
   runs: RunReport[];
+  /** When the operator accepted the risk notice. Null until they do. */
+  riskAcknowledgedAt: string | null;
   /** Project-scoped API keys this tool minted for itself, keyed by project id. */
   provisionedKeys: Record<string, { publicKey: string; secretKey: string; createdAt: string }>;
   cookieSecret: string;
@@ -92,6 +106,7 @@ export async function loadState(): Promise<void> {
   state = {
     policy: mergePolicy(stored?.policy),
     runs: stored?.runs ?? [],
+    riskAcknowledgedAt: stored?.riskAcknowledgedAt ?? null,
     provisionedKeys: stored?.provisionedKeys ?? {},
     cookieSecret: config.auth.cookieSecret ?? stored?.cookieSecret ?? randomBytes(32).toString("hex"),
   };
@@ -154,4 +169,28 @@ export async function saveProvisionedKey(
 
 export function getCookieSecret(): string {
   return state.cookieSecret;
+}
+
+/**
+ * Whether the operator has accepted the risk notice.
+ *
+ * Recorded per installation rather than per browser: it is a statement about
+ * this deployment, not a dismissed banner. RETENTION_RISK_ACKNOWLEDGED=true
+ * pre-accepts it for deployments that are never driven through the UI.
+ */
+export function riskAcknowledged(): boolean {
+  return config.riskAcknowledged || state.riskAcknowledgedAt !== null;
+}
+
+export function riskAcknowledgedAt(): string | null {
+  return config.riskAcknowledged ? "set via RETENTION_RISK_ACKNOWLEDGED" : state.riskAcknowledgedAt;
+}
+
+export async function acknowledgeRisk(): Promise<string> {
+  if (!state.riskAcknowledgedAt) {
+    state.riskAcknowledgedAt = new Date().toISOString();
+    await persist();
+    log.info("risk notice acknowledged", state.riskAcknowledgedAt);
+  }
+  return state.riskAcknowledgedAt;
 }
