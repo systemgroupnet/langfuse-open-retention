@@ -40,11 +40,10 @@ disk is going.
 
 Two separate problems on a self-hosted Core instance:
 
-1. **No retention policy.** Traces accumulate in ClickHouse forever. Langfuse gates the nightly retention job
-   behind an EE license.
-2. **Raw event blobs are never cleaned up, on any license.** Every ingested event is written to object storage as
+1. **No retention policy.** Traces accumulate in ClickHouse forever.
+2. **Raw event blobs are never cleaned up.** Every ingested event is written to object storage as
    a JSON blob. Langfuse's own docs only say *"we recommend configuring a bucket lifecycle policy"* — there is no
-   built-in cleanup, EE or not. On a busy instance this is usually the single largest consumer of disk, larger
+   built-in cleanup. On a busy instance this is usually the single largest consumer of disk, larger
    than ClickHouse itself.
 
 This tool addresses both, plus the Postgres tables (`audit_logs`, `job_executions`, orphaned `trace_sessions`)
