@@ -10,6 +10,7 @@ disk is going.
 
 ---
 
+> [!CAUTION]
 > ## ⚠️ Read this before you run it
 >
 > **This tool permanently deletes data from your Langfuse instance. There is no undo.**
