@@ -1,7 +1,6 @@
 # langfuse-open-retention
 
-Retention enforcement and a storage dashboard for **self-hosted Langfuse on the Hobby / Core license**, where
-[data retention](https://langfuse.com/docs/administration/data-retention) is an Enterprise-only feature.
+Retention enforcement and a storage dashboard for **self-hosted Langfuse on the Hobby / Core setups**.
 
 It deletes traces, observations, scores, media and — critically — the **raw ingestion event blobs that Langfuse
 never cleans up on any license**, on a configurable window (15 days by default), and shows you exactly where your
